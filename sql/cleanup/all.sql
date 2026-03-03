@@ -9,6 +9,7 @@ DROP SINK IF EXISTS kafka_sink_from_source;
 
 -- Materialized views (depend on sources/tables)
 DROP MATERIALIZED VIEW IF EXISTS mv_kafka_source_stats;
+DROP MATERIALIZED VIEW IF EXISTS user_event_stats_avro;
 DROP MATERIALIZED VIEW IF EXISTS user_event_stats;
 
 -- Sources (may have MV dependencies, dropped above)

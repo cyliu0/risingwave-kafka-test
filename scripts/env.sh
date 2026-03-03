@@ -2,9 +2,25 @@
 # Environment configuration for RisingWave and Kafka
 
 # Load environment variables from .env file if it exists
-if [ -f "$(dirname "${BASH_SOURCE[0]}")/../.env" ]; then
-    source "$(dirname "${BASH_SOURCE[0]}")/../.env"
-fi
+# Uses a safe method that doesn't expand $ characters in values
+load_env_file() {
+    local env_file="$(dirname "${BASH_SOURCE[0]}")/../.env"
+    if [ -f "$env_file" ]; then
+        while IFS='=' read -r key value || [ -n "$key" ]; do
+            # Skip comments and empty lines
+            case "$key" in
+                ""|\#*) continue ;;
+            esac
+            # Remove leading/trailing whitespace from key
+            key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            # Export if not already set in environment
+            if [ -z "${!key:-}" ]; then
+                export "$key=$value"
+            fi
+        done < "$env_file"
+    fi
+}
+load_env_file
 
 # RisingWave connection settings
 export RW_HOST="${RW_HOST:-}"

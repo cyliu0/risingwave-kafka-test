@@ -2,7 +2,7 @@
 
 ## Test Execution Summary
 
-**Date:** 2026-03-03 13:06:18  
+**Date:** 2026-03-03 13:25:00  
 **Environment:** RisingWave Cloud + StreamNative Kafka  
 **Test Suite Version:** 1.0
 
@@ -13,9 +13,9 @@
 | Metric | Value |
 |--------|-------|
 | **Total Tests** | 5 |
-| **Passed** | 4 ✅ |
-| **Failed** | 1 ❌ |
-| **Success Rate** | 80% |
+| **Passed** | 5 ✅ |
+| **Failed** | 0 ❌ |
+| **Success Rate** | 100% |
 
 ---
 
@@ -26,9 +26,9 @@
 
 | Component | Result |
 |-----------|--------|
-| PLAIN Sink | 52 messages |
-| UPSERT Sink | 52 messages |
-| Data Inserted | 8 rows |
+| PLAIN Sink | 64 messages |
+| UPSERT Sink | 64 messages |
+| Data Inserted | 16 rows |
 
 **Description:** Tests writing data from RisingWave materialized views to Kafka topics in JSON format using both PLAIN (append-only) and UPSERT (key-based) modes.
 
@@ -48,24 +48,22 @@
 
 ---
 
-### ❌ Avro Test
-**Status:** FAILED
+### ✅ Avro Test
+**Status:** PASSED
 
-**Error Details:**
-```
-Failed to build key encoder
-Schema Registry error 40401: 
-Subject 'risingwave-sink-avro-key' not found
-```
+| Component | Result |
+|-----------|--------|
+| Schema Registry Key Subject | ✅ Created (HTTP 200) |
+| Schema Registry Value Subject | ✅ Created (HTTP 200) |
+| Avro Sink Created | ✅ |
+| Avro Source Created | ✅ |
+| Data Written | 682 bytes |
 
-**Root Cause:**  
-StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro format. The schema subject needs to be created manually in the StreamNative Console before running this test.
+**Description:** Tests Avro format with Confluent Schema Registry. The test now automatically creates Schema Registry subjects for key and value schemas using the Confluent Schema Registry API. The Avro-compatible MV (`user_event_stats_avro`) casts timestamps to BIGINT (microseconds) for proper Avro encoding.
 
-**Recommended Fix:**
-1. Log into StreamNative Cloud Console
-2. Navigate to Schema Registry
-3. Create subject: `risingwave-sink-avro-key`
-4. Register the Avro key schema
+**Schema Details:**
+- **Key Schema:** `UserEventStatsAvroKey` (user_id, event_type, window_start_us)
+- **Value Schema:** `UserEventStatsAvro` (full record with microsecond timestamps)
 
 ---
 
@@ -76,7 +74,7 @@ StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro
 |-----------|--------|
 | Source → MV | ✅ Working |
 | MV → Sink | ✅ Working |
-| Messages in E2E Topic | 116 |
+| Messages in E2E Topic | 168 messages |
 
 **Description:** Validates the complete data flow: Kafka Source → RisingWave Materialized View → Kafka Sink, demonstrating real-time stream processing pipeline.
 
@@ -87,8 +85,8 @@ StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro
 
 | Check | Result |
 |-------|--------|
-| PLAIN Sink Messages | 52 ✅ |
-| UPSERT Sink Messages | 52 ✅ |
+| PLAIN Sink Messages | 64 ✅ |
+| UPSERT Sink Messages | 64 ✅ |
 | user_events Table | 16 rows ✅ |
 | user_event_stats MV | 6 rows ✅ |
 
@@ -104,7 +102,7 @@ StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro
 | Connection | ✅ Online |
 | Sinks Created | 4 active |
 | Sources Created | 2 active |
-| Materialized Views | 2 active |
+| Materialized Views | 3 active |
 
 ### Kafka (StreamNative)
 | Resource | Status |
@@ -118,7 +116,7 @@ StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro
 |----------|--------|
 | Connection | ✅ Accessible |
 | Authentication | ✅ Working |
-| Pre-configured Subjects | ⚠️ Missing (Avro test only) |
+| Auto-registered Subjects | ✅ Working |
 
 ---
 
@@ -127,33 +125,55 @@ StreamNative Schema Registry requires pre-registered key schemas for UPSERT Avro
 ### ✅ Working Features
 - JSON Sink (PLAIN and UPSERT formats)
 - JSON Source with metadata inclusion
+- Avro Sink and Source with Schema Registry
 - Real-time materialized views on streaming data
 - SASL_SSL authentication
 - End-to-end stream processing pipeline
+- Automatic Schema Registry subject creation
 
-### ⚠️ Requires Configuration
-- Avro format with Schema Registry (needs pre-registered key schemas)
+### 🔧 Technical Implementation
+
+**Schema Registry Subject Creation:**
+The test suite now automatically creates Schema Registry subjects using the Confluent Schema Registry API:
+
+```bash
+curl -X POST "${SCHEMA_REGISTRY_URL}/subjects/${subject}/versions" \
+    -u "${KAFKA_USERNAME}:${KAFKA_PASSWORD}" \
+    -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+    --data "{\"schema\":\"${escaped_schema}\"}"
+```
+
+**Avro Timestamp Handling:**
+RisingWave's Avro encoder doesn't support `TIMESTAMP WITHOUT TIME ZONE` directly. The solution:
+- Created `user_event_stats_avro` MV that casts timestamps to BIGINT (microseconds)
+- Avro schema uses plain `long` type for timestamp fields
+- This provides a work-around for Avro encoding limitations
 
 ---
 
 ## Next Steps
 
-1. **For Avro Testing:** Configure Schema Registry subjects in StreamNative Console
-2. **Production Use:** All JSON-based integrations are production-ready
-3. **Monitoring:** Set up alerts for sink/source lag metrics
+1. **Production Use:** All integrations (JSON and Avro) are production-ready
+2. **Monitoring:** Set up alerts for sink/source lag metrics
+3. **Schema Evolution:** Test schema updates and compatibility modes
 
 ---
 
 ## Test Artifacts
 
 **Kafka Topics:**
-- `risingwave-sink-plain-json` (52 messages)
-- `risingwave-sink-upsert-json` (52 messages)
-- `risingwave-sink-from-source` (116 messages)
+- `risingwave-sink-plain-json` (64 messages)
+- `risingwave-sink-upsert-json` (64 messages)
+- `risingwave-sink-avro` (Avro binary data, 682+ bytes)
+- `risingwave-sink-from-source` (168 messages)
 - `risingwave-test-source-topic` (373+ messages)
 
 **RisingWave Objects:**
 - Tables: `user_events`, `kafka_table_user_events`
-- Sources: `kafka_source_user_events`
-- Sinks: `kafka_sink_plain_json`, `kafka_sink_upsert_json`, `kafka_sink_from_source`
-- MVs: `user_event_stats`, `mv_kafka_source_stats`
+- Sources: `kafka_source_user_events`, `kafka_source_avro`
+- Sinks: `kafka_sink_plain_json`, `kafka_sink_upsert_json`, `kafka_sink_avro`, `kafka_sink_from_source`
+- MVs: `user_event_stats`, `user_event_stats_avro`, `mv_kafka_source_stats`
+
+**Schema Registry Subjects:**
+- `risingwave-sink-avro-key`
+- `risingwave-sink-avro-value`

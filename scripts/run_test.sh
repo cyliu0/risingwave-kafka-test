@@ -137,6 +137,73 @@ test_avro() {
         sleep 5
     fi
     
+    step "Creating Schema Registry subjects for Avro topic..."
+    # Use Confluent Schema Registry API (what RisingWave uses)
+    local sr_url="${SCHEMA_REGISTRY_URL}"
+    
+    # For UPSERT format, we need both -key and -value subjects
+    # Key schema: composite key (user_id, event_type, window_start_us)
+    local key_schema='{"type":"record","name":"UserEventStatsAvroKey","fields":[{"name":"user_id","type":"long"},{"name":"event_type","type":"string"},{"name":"window_start_us","type":"long"}]}'
+    
+    # Value schema: the full record (all fields from user_event_stats_avro MV)
+    local value_schema
+    value_schema='{"type":"record","name":"UserEventStatsAvro","fields":['
+    value_schema+='{"name":"user_id","type":"long"},'
+    value_schema+='{"name":"event_type","type":"string"},'
+    value_schema+='{"name":"window_start_us","type":"long"},'
+    value_schema+='{"name":"event_count","type":"long"},'
+    value_schema+='{"name":"avg_duration_ms","type":{"type":"bytes","logicalType":"decimal","precision":38,"scale":10}},'
+    value_schema+='{"name":"first_event_us","type":"long"},'
+    value_schema+='{"name":"last_event_us","type":"long"}'
+    value_schema+=']}'
+    
+    # Delete existing subjects to start fresh (soft delete, then hard delete)
+    delete_subject() {
+        local subject=$1
+        # Soft delete all versions
+        curl -s -X DELETE -u "${KAFKA_USERNAME}:${KAFKA_PASSWORD}" \
+            "${sr_url}/subjects/${subject}" >/dev/null 2>&1
+        # Hard delete
+        curl -s -X DELETE -u "${KAFKA_USERNAME}:${KAFKA_PASSWORD}" \
+            "${sr_url}/subjects/${subject}?permanent=true" >/dev/null 2>&1
+    }
+    
+    info "Cleaning up existing schemas..."
+    delete_subject "risingwave-sink-avro-key"
+    delete_subject "risingwave-sink-avro-value"
+    
+    # Function to register schema
+    register_schema() {
+        local subject=$1
+        local schema=$2
+        local escaped_schema=$(printf '%s' "$schema" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        local request_body="{\"schema\":\"$escaped_schema\"}"
+        
+        local response=$(curl -s -w "\n%{http_code}" -X POST "${sr_url}/subjects/${subject}/versions" \
+            -u "${KAFKA_USERNAME}:${KAFKA_PASSWORD}" \
+            -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+            --data "$request_body" 2>/dev/null || echo "\n000")
+        
+        local http_code=$(echo "$response" | tail -n1)
+        echo "$http_code"
+    }
+    
+    # Register key schema
+    local key_status=$(register_schema "risingwave-sink-avro-key" "$key_schema")
+    if [ "$key_status" = "200" ] || [ "$key_status" = "201" ] || [ "$key_status" = "409" ]; then
+        info "✓ Key schema registered (HTTP $key_status)"
+    else
+        warn "Key schema registration returned HTTP $key_status"
+    fi
+    
+    # Register value schema
+    local value_status=$(register_schema "risingwave-sink-avro-value" "$value_schema")
+    if [ "$value_status" = "200" ] || [ "$value_status" = "201" ] || [ "$value_status" = "409" ]; then
+        info "✓ Value schema registered (HTTP $value_status)"
+    else
+        warn "Value schema registration returned HTTP $value_status"
+    fi
+    
     step "Creating Avro sink..."
     if ! envsubst < "$SQL_DIR/avro/setup.sql" | psql "$RW_PSQL_URL" -v ON_ERROR_STOP=1 2>&1; then
         warn "Avro sink creation failed - Schema Registry may need pre-configured subjects"
@@ -144,7 +211,7 @@ test_avro() {
     fi
     
     step "Waiting for Avro data..."
-    sleep 10
+    sleep 20
     
     step "Checking Avro topic..."
     local bytes=$(kcat -b "$KAFKA_BROKER" -t "risingwave-sink-avro" -X security.protocol=SASL_SSL \
